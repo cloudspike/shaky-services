@@ -1,8 +1,8 @@
 CLUSTER_NAME ?= shaky-cluster
 # Only has an effect during creation. Upgrades of existing clusters need to be handled manually
 # Reference: https://cloud.google.com/kubernetes-engine/release-notes
-KUBERNETES_VERSION ?= 1.13.7-gke.24
-TEKTON_VERSION ?= v0.6.0
+KUBERNETES_VERSION ?= 1.14.6-gke.2
+TEKTON_VERSION ?= v0.7.0
 
 # By default use the currently active account and project, but allow override during make invoke
 SERVICE_ACCOUNT ?= $(shell gcloud config list --format 'value(core.account)' 2>/dev/null)
