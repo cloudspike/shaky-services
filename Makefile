@@ -1,7 +1,7 @@
 CLUSTER_NAME ?= shaky-cluster
 # Only has an effect during creation. Upgrades of existing clusters need to be handled manually
 # Reference: https://cloud.google.com/kubernetes-engine/release-notes
-KUBERNETES_VERSION ?= 1.14.8-gke.17
+KUBERNETES_VERSION ?= 1.15.4-gke.22
 TEKTON_VERSION ?= v0.9.1
 
 # By default use the currently active account and project, but allow override during make invoke
@@ -25,6 +25,7 @@ update: update-services
 # Stackdriver is used for logging and monitoring.
 # Vertical Pod Autoscaler is used for pod resource request recommendations.
 # Preemptible nodes are cheaper but are replaced at least once per 24 hours.
+# Identity namespace enables Workload Identity
 create-infra: init
 	@echo "Enable necessary Google Cloud APIs"
 	gcloud services enable container.googleapis.com compute.googleapis.com iam.googleapis.com iamcredentials.googleapis.com
@@ -32,7 +33,7 @@ create-infra: init
 	gcloud beta container clusters create ${CLUSTER_NAME} \
 	  --cluster-version=${KUBERNETES_VERSION} \
 	  --region=europe-west1 \
-	  --node-locations=europe-west1-d,europe-west1-d-b,europe-west1-d-c \
+	  --node-locations=europe-west1-d,europe-west1-b,europe-west1-c \
 	  --disk-size=100 \
 	  --disk-type=pd-ssd \
 	  --machine-type=n1-standard-4 \
@@ -47,6 +48,7 @@ create-infra: init
 	  --enable-ip-alias \
 	  --enable-shielded-nodes \
 	  --shielded-secure-boot \
+	  --shielded-integrity-monitoring \
 	  --identity-namespace=${PROJECT_NAME}.svc.id.goog \
 	  --preemptible
 	@echo "Granting ${SERVICE_ACCOUNT} cluster-admin role binding"
@@ -57,20 +59,21 @@ create-infra: init
 	kubectl auth can-i create roles
 	@echo "Create service account for Config Connector"
 	gcloud iam service-accounts create cnrm-system
+	@echo "Give service account elevated access to project"
 	gcloud projects add-iam-policy-binding ${PROJECT_NAME} \
-  	  --member serviceAccount:cnrm-system@${PROJECT_NAME}.iam.gserviceaccount.com \
-  	  --role roles/owner
-	gcloud iam service-accounts keys create --iam-account \
- 	  cnrm-system@${PROJECT_NAME}.iam.gserviceaccount.com key.json
-	@echo "Put Config Connector service account key into a Kubernetes Secret"
-	kubectl create namespace cnrm-system
-	kubectl create secret generic gcp-key --from-file key.json --namespace cnrm-system
-	rm -v key.json
+	  --member serviceAccount:cnrm-system@${PROJECT_NAME}.iam.gserviceaccount.com \
+	  --role roles/editor
+	@echo "Create a Cloud IAM policy binding between the IAM Service Account and the predefined Kubernetes service account run by KCC"
+	gcloud iam service-accounts add-iam-policy-binding cnrm-system@${PROJECT_NAME}.iam.gserviceaccount.com \
+	  --member serviceAccount:{PROJECT_NAME}.svc.id.goog[cnrm-system/cnrm-controller-manager] \
+	  --role roles/iam.workloadIdentityUser
 
 update-services: init
 	gcloud container clusters get-credentials ${CLUSTER_NAME} --region=europe-west1-d
+	# Upgrading Config Connector means running kubectl delete -f services/config-connector/ first
 	@echo "Installing Config Connector"
 	kubectl apply -f services/config-connector/
+	kubectl wait -n cnrm-system --for=condition=Initialized pod cnrm-controller-manager-0
 	@echo "Installing Tekton Pipelines"
 	kubectl apply -f services/tekton/
 

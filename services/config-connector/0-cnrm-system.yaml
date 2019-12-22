@@ -396,6 +396,9 @@ subjects:
 apiVersion: v1
 kind: Service
 metadata:
+  annotations:
+    prometheus.io/port: "8888"
+    prometheus.io/scrape: "true"
   labels:
     control-plane: controller-manager
     controller-tools.k8s.io: "1.0"
@@ -403,10 +406,50 @@ metadata:
   namespace: cnrm-system
 spec:
   ports:
-  - port: 443
+  - name: controller-manager
+    port: 443
+  - name: prometheus-scrape-port
+    port: 8888
   selector:
     control-plane: controller-manager
     controller-tools.k8s.io: "1.0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cnrm-resource-stats-recorder
+  namespace: cnrm-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cnrm-resource-stats-recorder
+  template:
+    metadata:
+      annotations:
+        prometheus.io/port: "8888"
+        prometheus.io/scrape: "true"
+      labels:
+        app: cnrm-resource-stats-recorder
+    spec:
+      containers:
+      - args:
+        - --prometheus-scrape-endpoint=:8888
+        - --metric-interval=60
+        command:
+        - /root/recorder
+        image: gcr.io/cnrm-eap/recorder:01a631f
+        imagePullPolicy: Always
+        name: recorder
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+      serviceAccountName: cnrm-controller-manager
+      terminationGracePeriodSeconds: 10
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -431,12 +474,13 @@ spec:
       containers:
       - args:
         - --stderrthreshold=INFO
+        - --prometheus-scrape-endpoint=:8888
         command:
         - /root/manager
         env:
         - name: GOOGLE_APPLICATION_CREDENTIALS
           value: /var/secrets/google/key.json
-        image: gcr.io/cnrm-eap/controller:05c6639
+        image: gcr.io/cnrm-eap/controller:01a631f
         imagePullPolicy: Always
         name: manager
         resources:
